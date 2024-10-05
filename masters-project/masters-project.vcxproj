@@ -151,6 +151,7 @@
     <None Include="C:\Users\idanc\Downloads\ЛР_2_Геш-функція Купина\Kupyna-reference\kupyna-reference" />
   </ItemGroup>
   <ItemGroup>
+    <Text Include="C:\Users\idanc\Downloads\QRNG.txt" />
     <Text Include="FileName.txt" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

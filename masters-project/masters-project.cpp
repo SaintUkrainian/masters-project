@@ -9,6 +9,13 @@
 #include "Resource.h"
 #include <CommCtrl.h>  // Необхідно для використання Common Controls, як ComboBox і Button
 #include <time.h>
+#include <vector>
+#include <string>
+#include <fstream>
+#include <iostream>
+#include <iomanip>  
+#include <sstream>  // Для роботи з потоками строк
+#include <random>
 
 
 #define MAX_LOADSTRING 100
@@ -120,6 +127,11 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
     HWND hComboBox = CreateWindowW(WC_COMBOBOX, L"", CBS_DROPDOWNLIST | WS_CHILD | WS_VISIBLE,
         10, 10, 150, 300, hWnd, (HMENU)IDC_MYCOMBOBOX, hInstance, NULL);
 
+    HWND hReadAndHashButton = CreateWindowW(L"BUTTON", L"Read and Generate QRNG Hash",
+        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
+        450, 10, 250, 30, hWnd, (HMENU)(LONG_PTR)IDC_READ_AND_HASH_BUTTON, hInstance, NULL);
+
+
     // Додавання опцій до ComboBox
     const wchar_t* sizes[] = { L"512", L"1024", L"2048", L"8", L"760", L"0", L"510", L"655" };
     for (int i = 0; i < sizeof(sizes) / sizeof(sizes[0]); ++i) {
@@ -128,9 +140,9 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
     SendMessage(hComboBox, CB_SETCURSEL, 0, 0);  // Встановлення вибраного елементу на перший
 
     // Створення кнопки
-    HWND hButton = CreateWindowW(L"BUTTON", L"Generate Hash",
+    HWND hButton = CreateWindowW(L"BUTTON", L"Generate Dummy Hash",
         WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
-        170, 10, 150, 30, hWnd, (HMENU)IDC_MYBUTTON, hInstance, NULL);
+        170, 10, 250, 30, hWnd, (HMENU)IDC_MYBUTTON, hInstance, NULL);
 
     // Створення текстового поля для виведення результатів
     hText = CreateWindowW(L"EDIT", NULL,
@@ -180,6 +192,59 @@ void GenerateAndDisplayHash(int size, HWND hWnd) {
     delete[] test_data;
 }
 
+bool ReadFileData(const std::string& filename, std::vector<uint8_t>& data) {
+    std::ifstream file(filename, std::ios::binary);
+    if (!file) {
+        std::cerr << "Cannot open file: " << filename << std::endl;
+        return false;
+    }
+
+    // Читання даних з файлу
+    data.assign((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    file.close();
+    return true;
+}
+
+void HashRandomBlock(const std::vector<uint8_t>& data, int blockSize, HWND hEdit) {
+    if (data.size() < blockSize) {
+        std::cerr << "Data size is too small for the given block size." << std::endl;
+        return;
+    }
+
+    int numBlocks = data.size() / blockSize;
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> dis(0, numBlocks - 1);
+
+    int blockIndex = dis(gen);
+    std::vector<uint8_t> block(data.begin() + blockIndex * blockSize, data.begin() + (blockIndex + 1) * blockSize);
+
+    kupyna_t ctx;
+    KupynaInit(256, &ctx);
+    uint8_t hash_code[256 / 8];
+    KupynaHash(&ctx, block.data(), blockSize, hash_code);
+
+    std::wstringstream ss;
+    ss << L"Hash for block " << blockIndex << L" of data:\n";
+    for (int i = 0; i < sizeof(hash_code); i++) {
+        ss << std::hex << std::setfill(L'0') << std::setw(2) << static_cast<int>(hash_code[i]);
+    }
+
+    // Вивід у текстове поле
+    SetWindowText(hEdit, ss.str().c_str());
+}
+
+
+
+void OnButtonPress(HWND hEdit) {
+    std::vector<uint8_t> data;
+    std::string filename = "C:/Users/idanc/Downloads/QRNG.txt";
+    if (ReadFileData(filename, data)) {
+        HashRandomBlock(data, 512, hEdit);  // Припустимо, блоки по 512 байт
+    }
+}
+
+
 //
 //  FUNCTION: WndProc(HWND, UINT, WPARAM, LPARAM)
 //
@@ -216,6 +281,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             break;
         }
                          break;
+        case IDC_READ_AND_HASH_BUTTON:
+            OnButtonPress(hText);  // Ваша функція для зчитування файлу і генерації хешу
+            break;
         // Інші випадки для меню тощо
         default:
             return DefWindowProc(hWnd, message, wParam, lParam);
