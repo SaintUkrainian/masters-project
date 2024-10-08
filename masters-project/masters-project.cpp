@@ -16,7 +16,12 @@
 #include <iomanip>  
 #include <sstream>  // Для роботи з потоками строк
 #include <random>
-
+#include <algorithm>
+#include <fstream>
+#include <vector>
+#include <thread>
+#include <iostream>
+#include <mutex>
 
 #define MAX_LOADSTRING 100
 
@@ -36,6 +41,9 @@ HWND hText;  // Глобальна змінна для текстового по
 void append_text_to_edit_control(HWND hWnd, const wchar_t* new_text);
 
 void calculateHashCode();
+
+// Глобальний м'ютекс для синхронізації доступу до файлу
+std::mutex fileMutex;
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
@@ -116,7 +124,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
     hInst = hInstance;  // Store instance handle in our global variable
 
     HWND hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
+        CW_USEDEFAULT, CW_USEDEFAULT, 550, 200, nullptr, nullptr, hInstance, nullptr);
 
     if (!hWnd)
     {
@@ -124,30 +132,45 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
     }
 
     // Створення ComboBox
-    HWND hComboBox = CreateWindowW(WC_COMBOBOX, L"", CBS_DROPDOWNLIST | WS_CHILD | WS_VISIBLE,
-        10, 10, 150, 300, hWnd, (HMENU)IDC_MYCOMBOBOX, hInstance, NULL);
 
     HWND hReadAndHashButton = CreateWindowW(L"BUTTON", L"Read and Generate QRNG Hash",
         WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
-        450, 10, 250, 30, hWnd, (HMENU)(LONG_PTR)IDC_READ_AND_HASH_BUTTON, hInstance, NULL);
+        260, 10, 250, 30, hWnd, (HMENU)(LONG_PTR)IDC_READ_AND_HASH_BUTTON, hInstance, NULL);
 
 
     // Додавання опцій до ComboBox
-    const wchar_t* sizes[] = { L"512", L"1024", L"2048", L"8", L"760", L"0", L"510", L"655" };
-    for (int i = 0; i < sizeof(sizes) / sizeof(sizes[0]); ++i) {
-        SendMessage(hComboBox, CB_ADDSTRING, 0, (LPARAM)sizes[i]);
-    }
-    SendMessage(hComboBox, CB_SETCURSEL, 0, 0);  // Встановлення вибраного елементу на перший
+    //const wchar_t* sizes[] = { L"512", L"1024", L"2048", L"8", L"760", L"0", L"510", L"655" };
+//for (int i = 0; i < sizeof(sizes) / sizeof(sizes[0]); ++i) {
+     //   SendMessage(hComboBox, CB_ADDSTRING, 0, (LPARAM)sizes[i]);
+    //}
+    //SendMessage(hComboBox, CB_SETCURSEL, 0, 0);  // Встановлення вибраного елементу на перший
+
+    // Додавання ComboBox для вибору режиму Купини
+    HWND hComboBoxMode = CreateWindowW(L"COMBOBOX", NULL, WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST,
+        10, 10, 130, 300, hWnd, (HMENU)IDC_COMBO_MODE, hInstance, NULL);
+    SendMessage(hComboBoxMode, CB_ADDSTRING, 0, (LPARAM)L"Kupyna-256");
+    SendMessage(hComboBoxMode, CB_ADDSTRING, 0, (LPARAM)L"Kupyna-384");
+    SendMessage(hComboBoxMode, CB_ADDSTRING, 0, (LPARAM)L"Kupyna-512");
+    SendMessage(hComboBoxMode, CB_SETCURSEL, 0, 0);  // Set default selection
+
+    // Додавання ComboBox для вибору розміру блоку
+    HWND hComboBoxBlockSize = CreateWindowW(L"COMBOBOX", NULL, WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST,
+        150, 10, 100, 300, hWnd, (HMENU)IDC_COMBO_BLOCK_SIZE, hInstance, NULL);
+    SendMessage(hComboBoxBlockSize, CB_ADDSTRING, 0, (LPARAM)L"256");
+    SendMessage(hComboBoxBlockSize, CB_ADDSTRING, 0, (LPARAM)L"512");
+    SendMessage(hComboBoxBlockSize, CB_ADDSTRING, 0, (LPARAM)L"1024");
+    SendMessage(hComboBoxBlockSize, CB_SETCURSEL, 0, 0);  // Set default selection
+
 
     // Створення кнопки
-    HWND hButton = CreateWindowW(L"BUTTON", L"Generate Dummy Hash",
-        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
-        170, 10, 250, 30, hWnd, (HMENU)IDC_MYBUTTON, hInstance, NULL);
+   // HWND hButton = CreateWindowW(L"BUTTON", L"Generate Dummy Hash",
+     //   WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
+     //   170, 10, 250, 30, hWnd, (HMENU)IDC_MYBUTTON, hInstance, NULL);
 
     // Створення текстового поля для виведення результатів
-    hText = CreateWindowW(L"EDIT", NULL,
-        WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL,
-        10, 50, 780, 580, hWnd, NULL, hInstance, NULL);
+   // hText = CreateWindowW(L"EDIT", NULL,
+    //    WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL,
+    //    10, 50, 780, 580, hWnd, NULL, hInstance, NULL);
 
     ShowWindow(hWnd, nCmdShow);
     UpdateWindow(hWnd);
@@ -205,6 +228,78 @@ bool ReadFileData(const std::string& filename, std::vector<uint8_t>& data) {
     return true;
 }
 
+std::vector<uint8_t> HashKupyna(std::vector<uint8_t>& block, int hashMode) {
+    kupyna_t ctx;
+    KupynaInit(hashMode, &ctx);
+    std::vector<uint8_t> hash_code(hashMode / 8);
+    KupynaHash(&ctx, block.data(), block.size(), hash_code.data());
+    return hash_code;
+}
+
+void processBlock(std::vector<uint8_t> block, int hashMode, std::ofstream& output) {
+    std::vector<uint8_t> hash = HashKupyna(block, hashMode);
+
+    // Забезпечуємо синхронізований доступ до файлу для запису
+    std::lock_guard<std::mutex> lock(fileMutex);
+    for (uint8_t byte : hash) {
+        output << std::hex << std::setfill('0') << std::setw(2) << (int)byte;
+    }
+    output << std::endl;
+}
+
+void OnGenerateHash(HWND hWnd) {
+    MessageBox(hWnd, L"Хешування розпочато. Будь ласка, зачекайте...", L"Інформація", MB_ICONINFORMATION | MB_OK);
+    int modeIndex = (int)SendMessage(GetDlgItem(hWnd, IDC_COMBO_MODE), CB_GETCURSEL, 0, 0);
+    int blockSizeIndex = (int)SendMessage(GetDlgItem(hWnd, IDC_COMBO_BLOCK_SIZE), CB_GETCURSEL, 0, 0);
+    int hashMode = (modeIndex == 0 ? 256 : (modeIndex == 1 ? 384 : 512));
+    int blockSize = (blockSizeIndex == 0 ? 256 : (blockSizeIndex == 1 ? 512 : 1024));
+
+    std::vector<uint8_t> data;
+    ReadFileData("C:/Users/idanc/Downloads/QRNG.txt", data);
+
+    std::ofstream output("C:/Users/idanc/Downloads/Output.txt");
+    std::vector<std::thread> threads;
+
+    for (size_t i = 0; i < data.size(); i += blockSize) {
+        size_t currentBlockSize = min(blockSize, data.size() - i);
+        std::vector<uint8_t> block(data.begin() + i, data.begin() + i + currentBlockSize);
+
+        // Створення нового потоку для кожного блоку даних
+        threads.emplace_back(processBlock, block, hashMode, std::ref(output));
+    }
+
+    // Очікуємо завершення всіх потоків
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    output.close();
+    MessageBox(hWnd, L"Хешування завершено. Результати збережено у файлі 'Output.txt'.", L"Інформація", MB_ICONINFORMATION | MB_OK);
+}
+
+void OnGenerateHashOld(HWND hWnd) {
+    int modeIndex = (int)SendMessage(GetDlgItem(hWnd, IDC_COMBO_MODE), CB_GETCURSEL, 0, 0);
+    int blockSizeIndex = (int)SendMessage(GetDlgItem(hWnd, IDC_COMBO_BLOCK_SIZE), CB_GETCURSEL, 0, 0);
+    int hashMode = (modeIndex == 0 ? 256 : (modeIndex == 1 ? 384 : 512));
+    int blockSize = (blockSizeIndex == 0 ? 256 : (blockSizeIndex == 1 ? 512 : 1024));
+
+    std::vector<uint8_t> data;
+    ReadFileData("C:/Users/idanc/Downloads/QRNG.txt", data);
+
+    std::ofstream output("C:/Users/idanc/Downloads/Output.txt");
+    for (size_t i = 0; i < data.size(); i += blockSize) {
+        size_t currentBlockSize = min(blockSize, data.size() - i);
+        std::vector<uint8_t> block(data.begin() + i, data.begin() + i + currentBlockSize);
+        std::vector<uint8_t> hash = HashKupyna(block, hashMode);
+
+        for (uint8_t byte : hash) {
+            output << std::hex << std::setfill('0') << std::setw(2) << (int)byte;
+        }
+        output << std::endl;
+    }
+    output.close();
+}
+
 void HashRandomBlock(const std::vector<uint8_t>& data, int blockSize, HWND hEdit) {
     if (data.size() < blockSize) {
         std::cerr << "Data size is too small for the given block size." << std::endl;
@@ -255,42 +350,35 @@ void OnButtonPress(HWND hEdit) {
 //  WM_DESTROY  - post a quit message and return
 //
 //
-LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
-{
-
-    int idx = (int)SendDlgItemMessage(hWnd, IDC_MYCOMBOBOX, CB_GETCURSEL, 0, 0);
-
-    switch (message)
-    {
-    case WM_COMMAND:
-    {
+LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    switch (message) {
+    case WM_COMMAND: {
         int wmId = LOWORD(wParam);
-        switch (wmId)
-        {
-        case IDC_MYBUTTON: {
-            int idx = (int)SendDlgItemMessage(hWnd, IDC_MYCOMBOBOX, CB_GETCURSEL, 0, 0); // Отримання індексу вибраного елементу
-            if (idx != CB_ERR) { // Переконуємося, що індекс коректний
-                wchar_t sizeBuffer[10]; // Буфер для збереження вибраного тексту
-                SendDlgItemMessage(hWnd, IDC_MYCOMBOBOX, CB_GETLBTEXT, (WPARAM)idx, (LPARAM)sizeBuffer);
-                int size = _wtoi(sizeBuffer); // Конвертація вибраного тексту у ціле число
-                GenerateAndDisplayHash(size, hWnd);
-            }
-            else {
-                MessageBox(hWnd, L"Please select a valid size.", L"Error", MB_OK);
-            }
-            break;
-        }
-                         break;
+        switch (wmId) {
         case IDC_READ_AND_HASH_BUTTON:
-            OnButtonPress(hText);  // Ваша функція для зчитування файлу і генерації хешу
+            OnGenerateHash(hWnd);
             break;
-        // Інші випадки для меню тощо
+        case IDM_ABOUT:
+            MessageBox(hWnd, L"Розробив студент групи КБ-61, Маценко Денис Віталійович", L"Про", MB_OK);
+            break;
+        case IDM_EXIT:
+            DestroyWindow(hWnd);
+            break;
         default:
             return DefWindowProc(hWnd, message, wParam, lParam);
         }
     }
-    break;
-    // Інші повідомлення
+                   break;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hWnd, &ps);
+        // Тут можна додати малювання
+        EndPaint(hWnd, &ps);
+    }
+                 break;
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        break;
     default:
         return DefWindowProc(hWnd, message, wParam, lParam);
     }
