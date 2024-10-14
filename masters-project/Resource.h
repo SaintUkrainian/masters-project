@@ -3,6 +3,7 @@
 // Used by masters-project.rc
 
 #define IDS_APP_TITLE			103
+#define IDC_EXTRACTOR_MODE 1007
 
 #define IDC_MYCOMBOBOX 1001
 #define IDC_MYBUTTON   1002

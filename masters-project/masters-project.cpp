@@ -7,7 +7,9 @@
 #include <memory.h>
 #include "kupyna.h"
 #include "Resource.h"
+#include <windows.h>
 #include <CommCtrl.h>  // Необхідно для використання Common Controls, як ComboBox і Button
+#include <commdlg.h>
 #include <time.h>
 #include <vector>
 #include <string>
@@ -22,6 +24,8 @@
 #include <thread>
 #include <iostream>
 #include <mutex>
+#include <chrono>
+#include <iomanip>
 
 #define MAX_LOADSTRING 100
 
@@ -123,7 +127,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 {
     hInst = hInstance;  // Store instance handle in our global variable
 
-    HWND hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW,
+    HWND hWnd = CreateWindowW(szWindowClass, L"QRNG.UA Kharkiv National University V. N. Karazin", WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, 550, 200, nullptr, nullptr, hInstance, nullptr);
 
     if (!hWnd)
@@ -161,6 +165,11 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
     SendMessage(hComboBoxBlockSize, CB_ADDSTRING, 0, (LPARAM)L"1024");
     SendMessage(hComboBoxBlockSize, CB_SETCURSEL, 0, 0);  // Set default selection
 
+    // У функції створення вікна або обробки WM_CREATE
+    HWND hCheckbox = CreateWindowW(L"BUTTON", L"Extractor Mode",
+        WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX,
+        10, 40, 117, 30, hWnd, (HMENU)IDC_EXTRACTOR_MODE, hInstance, NULL);
+
 
     // Створення кнопки
    // HWND hButton = CreateWindowW(L"BUTTON", L"Generate Dummy Hash",
@@ -177,6 +186,11 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 
     return TRUE;
 }
+
+BOOL IsExtractorMode(HWND hWnd) {
+    return (SendMessage(GetDlgItem(hWnd, IDC_EXTRACTOR_MODE), BM_GETCHECK, 0, 0) == BST_CHECKED);
+}
+
 
 void GenerateAndDisplayHash(int size, HWND hWnd) {
     kupyna_t ctx;
@@ -215,10 +229,10 @@ void GenerateAndDisplayHash(int size, HWND hWnd) {
     delete[] test_data;
 }
 
-bool ReadFileData(const std::string& filename, std::vector<uint8_t>& data) {
+bool ReadFileData(std::wstring filename, std::vector<uint8_t>& data) {
     std::ifstream file(filename, std::ios::binary);
     if (!file) {
-        std::cerr << "Cannot open file: " << filename << std::endl;
+        std::cerr << "Cannot open file!" << std::endl;
         return false;
     }
 
@@ -236,45 +250,120 @@ std::vector<uint8_t> HashKupyna(std::vector<uint8_t>& block, int hashMode) {
     return hash_code;
 }
 
-void processBlock(std::vector<uint8_t> block, int hashMode, std::ofstream& output) {
+void processBlock(std::vector<uint8_t> block, int hashMode, std::ofstream& output, bool isBinaryMode) {
     std::vector<uint8_t> hash = HashKupyna(block, hashMode);
 
-    // Забезпечуємо синхронізований доступ до файлу для запису
-    std::lock_guard<std::mutex> lock(fileMutex);
-    for (uint8_t byte : hash) {
-        output << std::hex << std::setfill('0') << std::setw(2) << (int)byte;
+    if (isBinaryMode) {
+        // Запис у бінарному режимі
+        output.write(reinterpret_cast<const char*>(hash.data()), hash.size());
     }
-    output << std::endl;
+    else {
+        // Запис у текстовому режимі
+        for (uint8_t byte : hash) {
+            output << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
+        }
+        output << std::endl;
+    }
+}
+
+// Функція для вибору файлу для читання
+std::wstring SelectInputFile(HWND hWnd) {
+    OPENFILENAME ofn;       // структура для управління діалогом вибору файлу
+    WCHAR szFile[260] = { 0 };  // буфер для шляху до файлу
+
+    // Ініціалізація OPENFILENAME
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = hWnd;
+    ofn.lpstrFile = szFile;
+    ofn.nMaxFile = sizeof(szFile);
+    ofn.lpstrFilter = L"All files\0*.*\0Text Files\0*.TXT\0";
+    ofn.nFilterIndex = 1;
+    ofn.lpstrFileTitle = NULL;
+    ofn.nMaxFileTitle = 0;
+    ofn.lpstrInitialDir = NULL;
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+
+    if (GetOpenFileName(&ofn) == TRUE) {
+        return ofn.lpstrFile;
+    }
+    return L"";
+}
+
+// Функція для визначення файлу для збереження результатів
+std::wstring SelectOutputFile(HWND hWnd) {
+    OPENFILENAME ofn;
+    WCHAR szFile[260] = { 0 };
+
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = hWnd;
+    ofn.lpstrFile = szFile;
+    ofn.nMaxFile = sizeof(szFile);
+    ofn.lpstrFilter = L"All files\0*.*\0Text Files\0*.TXT\0";
+    ofn.nFilterIndex = 1;
+    ofn.lpstrFileTitle = NULL;
+    ofn.nMaxFileTitle = 0;
+    ofn.lpstrInitialDir = NULL;
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
+
+    if (GetSaveFileName(&ofn) == TRUE) {
+        return ofn.lpstrFile;
+    }
+    return L"";
 }
 
 void OnGenerateHash(HWND hWnd) {
-    MessageBox(hWnd, L"Хешування розпочато. Будь ласка, зачекайте...", L"Інформація", MB_ICONINFORMATION | MB_OK);
+    std::wstring inputPath = SelectInputFile(hWnd);
+    std::wstring outputPath = SelectOutputFile(hWnd);
+
+    if (inputPath.empty() || outputPath.empty()) {
+        MessageBox(hWnd, L"No file selected!", L"Error", MB_ICONERROR | MB_OK);
+        return;
+    }
+
+    std::wstringstream initMessage;
+    initMessage << L"Hashing started, please wait...";
+    if (IsExtractorMode(hWnd)) {
+        initMessage << L"\nExtractor Mode has been selected";
+    }
+    MessageBox(hWnd, initMessage.str().c_str(), L"Information", MB_ICONINFORMATION | MB_OK);
+
     int modeIndex = (int)SendMessage(GetDlgItem(hWnd, IDC_COMBO_MODE), CB_GETCURSEL, 0, 0);
     int blockSizeIndex = (int)SendMessage(GetDlgItem(hWnd, IDC_COMBO_BLOCK_SIZE), CB_GETCURSEL, 0, 0);
-    int hashMode = (modeIndex == 0 ? 256 : (modeIndex == 1 ? 384 : 512));
-    int blockSize = (blockSizeIndex == 0 ? 256 : (blockSizeIndex == 1 ? 512 : 1024));
+    int hashMode = (IsExtractorMode(hWnd) ? 512 : (modeIndex == 0 ? 256 : (modeIndex == 1 ? 384 : 512)));
+    int blockSize = (IsExtractorMode(hWnd) ? 64 : (blockSizeIndex == 0 ? 256 : (blockSizeIndex == 1 ? 512 : 1024)));
 
     std::vector<uint8_t> data;
-    ReadFileData("C:/Users/idanc/Downloads/QRNG.txt", data);
+    ReadFileData(inputPath, data);
 
-    std::ofstream output("C:/Users/idanc/Downloads/Output.txt");
+    // Вибір режиму запису файлу залежно від режиму екстрактора
+    std::ofstream output(outputPath, IsExtractorMode(hWnd) ? std::ios::binary : std::ios::out);
     std::vector<std::thread> threads;
+
+    auto start = std::chrono::high_resolution_clock::now();
 
     for (size_t i = 0; i < data.size(); i += blockSize) {
         size_t currentBlockSize = min(blockSize, data.size() - i);
         std::vector<uint8_t> block(data.begin() + i, data.begin() + i + currentBlockSize);
 
-        // Створення нового потоку для кожного блоку даних
-        threads.emplace_back(processBlock, block, hashMode, std::ref(output));
+        threads.emplace_back(processBlock, block, hashMode, std::ref(output), IsExtractorMode(hWnd));
     }
 
-    // Очікуємо завершення всіх потоків
     for (auto& thread : threads) {
         thread.join();
     }
 
     output.close();
-    MessageBox(hWnd, L"Хешування завершено. Результати збережено у файлі 'Output.txt'.", L"Інформація", MB_ICONINFORMATION | MB_OK);
+
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> elapsed = end - start;
+
+    std::wstringstream ss;
+    ss << L"Hashing Succeeded. Result has been saved in the output file.\n";
+    ss << L"Time elapsed: " << elapsed.count() << L" seconds.";
+
+    MessageBox(hWnd, ss.str().c_str(), L"Information", MB_ICONINFORMATION | MB_OK);
 }
 
 void OnGenerateHashOld(HWND hWnd) {
@@ -284,7 +373,7 @@ void OnGenerateHashOld(HWND hWnd) {
     int blockSize = (blockSizeIndex == 0 ? 256 : (blockSizeIndex == 1 ? 512 : 1024));
 
     std::vector<uint8_t> data;
-    ReadFileData("C:/Users/idanc/Downloads/QRNG.txt", data);
+    //ReadFileData("C:/Users/idanc/Downloads/QRNG.txt", data);
 
     std::ofstream output("C:/Users/idanc/Downloads/Output.txt");
     for (size_t i = 0; i < data.size(); i += blockSize) {
@@ -329,17 +418,6 @@ void HashRandomBlock(const std::vector<uint8_t>& data, int blockSize, HWND hEdit
     SetWindowText(hEdit, ss.str().c_str());
 }
 
-
-
-void OnButtonPress(HWND hEdit) {
-    std::vector<uint8_t> data;
-    std::string filename = "C:/Users/idanc/Downloads/QRNG.txt";
-    if (ReadFileData(filename, data)) {
-        HashRandomBlock(data, 512, hEdit);  // Припустимо, блоки по 512 байт
-    }
-}
-
-
 //
 //  FUNCTION: WndProc(HWND, UINT, WPARAM, LPARAM)
 //
@@ -359,7 +437,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
             OnGenerateHash(hWnd);
             break;
         case IDM_ABOUT:
-            MessageBox(hWnd, L"Розробив студент групи КБ-61, Маценко Денис Віталійович", L"Про", MB_OK);
+            MessageBox(hWnd, L"Kharkiv National University V. N. Karazin. Denys Matsenko", L"About", MB_OK);
             break;
         case IDM_EXIT:
             DestroyWindow(hWnd);
@@ -415,54 +493,6 @@ INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
     }printf ("\n\n");\
 
 void print(int data_len, uint8_t data[]);
-
-
-void calculateHashCode() {
-    kupyna_t ctx;
-    uint8_t hash_code[512 / 8]; // Буфер для хешу
-    wchar_t message[4096];    // Більший буфер для зберігання форматованого тексту
-
-    // Очищення текстового поля перед виведенням нових результатів
-    SetWindowTextW(hText, L"");  // Очистити вміст
-
-    // Встановлення шрифту фіксованої ширини
-    HFONT hFont = CreateFont(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, ANSI_CHARSET,
-        OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
-        FIXED_PITCH | FF_MODERN, L"Consolas");
-    SendMessage(hText, WM_SETFONT, (WPARAM)hFont, TRUE);
-
-    // Початкове повідомлення
-    wcscpy_s(message, 4096, L"Starting Kupyna-256 tests:\n-----------------------------\n");
-    append_text_to_edit_control(hText, message);
-
-    const int test_sizes[] = { 512, 1024, 2048, 8, 760, 0, 510, 655 };
-    for (int test = 0; test < sizeof(test_sizes) / sizeof(test_sizes[0]); ++test) {
-        int size = test_sizes[test];
-        KupynaInit(256, &ctx); // Ініціалізація контексту хешування
-
-        // Формування повідомлення про тест
-        swprintf(message, 4096, L"\nTest Size: %d bits\nData:\n", size);
-        append_text_to_edit_control(hText, message);
-
-        // Генерація і виведення хешу
-        KupynaHash(&ctx, hash_code, sizeof(hash_code), hash_code);
-        swprintf(message, 4096, L"Hash Output:\n");
-        for (int i = 0; i < sizeof(hash_code); ++i) {
-            wchar_t temp[10];
-            swprintf(temp, 10, L"%02X ", hash_code[i]);
-            wcscat_s(message, 4096, temp);
-            if ((i + 1) % 16 == 0) wcscat_s(message, 4096, L"\n");
-        }
-        wcscat_s(message, 4096, L"\n-----------------------------\n");
-        append_text_to_edit_control(hText, message);
-    }
-
-    swprintf(message, 4096, L"All tests completed.\n");
-    append_text_to_edit_control(hText, message);
-
-    // Очищення ресурсів шрифту
-    DeleteObject(hFont);
-}
 
 
 void append_text_to_edit_control(HWND hWnd, const wchar_t* new_text)
