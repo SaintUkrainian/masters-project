@@ -42,6 +42,8 @@ INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
 
 HWND hText;  // Глобальна змінна для текстового поля
 
+HWND hImage;
+
 void append_text_to_edit_control(HWND hWnd, const wchar_t* new_text);
 
 void calculateHashCode();
@@ -85,8 +87,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     return (int) msg.wParam;
 }
 
-
-
 //
 //  FUNCTION: MyRegisterClass()
 //
@@ -128,7 +128,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
     hInst = hInstance;  // Store instance handle in our global variable
 
     HWND hWnd = CreateWindowW(szWindowClass, L"QRNG.UA Kharkiv National University V. N. Karazin", WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 550, 200, nullptr, nullptr, hInstance, nullptr);
+        CW_USEDEFAULT, CW_USEDEFAULT, 550, 450, nullptr, nullptr, hInstance, nullptr);
 
     if (!hWnd)
     {
@@ -141,13 +141,6 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
         WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
         260, 10, 250, 30, hWnd, (HMENU)(LONG_PTR)IDC_READ_AND_HASH_BUTTON, hInstance, NULL);
 
-
-    // Додавання опцій до ComboBox
-    //const wchar_t* sizes[] = { L"512", L"1024", L"2048", L"8", L"760", L"0", L"510", L"655" };
-//for (int i = 0; i < sizeof(sizes) / sizeof(sizes[0]); ++i) {
-     //   SendMessage(hComboBox, CB_ADDSTRING, 0, (LPARAM)sizes[i]);
-    //}
-    //SendMessage(hComboBox, CB_SETCURSEL, 0, 0);  // Встановлення вибраного елементу на перший
 
     // Додавання ComboBox для вибору режиму Купини
     HWND hComboBoxMode = CreateWindowW(L"COMBOBOX", NULL, WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST,
@@ -169,17 +162,6 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
     HWND hCheckbox = CreateWindowW(L"BUTTON", L"Extractor Mode",
         WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX,
         10, 40, 117, 30, hWnd, (HMENU)IDC_EXTRACTOR_MODE, hInstance, NULL);
-
-
-    // Створення кнопки
-   // HWND hButton = CreateWindowW(L"BUTTON", L"Generate Dummy Hash",
-     //   WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
-     //   170, 10, 250, 30, hWnd, (HMENU)IDC_MYBUTTON, hInstance, NULL);
-
-    // Створення текстового поля для виведення результатів
-   // hText = CreateWindowW(L"EDIT", NULL,
-    //    WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL,
-    //    10, 50, 780, 580, hWnd, NULL, hInstance, NULL);
 
     ShowWindow(hWnd, nCmdShow);
     UpdateWindow(hWnd);
@@ -331,8 +313,8 @@ void OnGenerateHash(HWND hWnd) {
 
     int modeIndex = (int)SendMessage(GetDlgItem(hWnd, IDC_COMBO_MODE), CB_GETCURSEL, 0, 0);
     int blockSizeIndex = (int)SendMessage(GetDlgItem(hWnd, IDC_COMBO_BLOCK_SIZE), CB_GETCURSEL, 0, 0);
-    int hashMode = (IsExtractorMode(hWnd) ? 512 : (modeIndex == 0 ? 256 : (modeIndex == 1 ? 384 : 512)));
-    int blockSize = (IsExtractorMode(hWnd) ? 64 : (blockSizeIndex == 0 ? 256 : (blockSizeIndex == 1 ? 512 : 1024)));
+    int hashMode = (modeIndex == 0 ? 256 : (modeIndex == 1 ? 384 : 512));
+    int blockSize = (IsExtractorMode(hWnd) ? hashMode / 8 : (blockSizeIndex == 0 ? 256 : (blockSizeIndex == 1 ? 512 : 1024)));
 
     std::vector<uint8_t> data;
     ReadFileData(inputPath, data);
@@ -430,6 +412,27 @@ void HashRandomBlock(const std::vector<uint8_t>& data, int blockSize, HWND hEdit
 //
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
+    case WM_CREATE: {
+        // Створення статичного елемента для зображення
+        hImage = CreateWindow(TEXT("static"), NULL,
+            WS_VISIBLE | WS_CHILD | SS_BITMAP,
+            0, 100, 0, 0, // Розміри і положення
+            hWnd, (HMENU)1, hInst, NULL);
+
+        // Завантаження зображення
+        HBITMAP hBitmap = (HBITMAP)LoadImage(NULL, TEXT("C:/Users/idanc/Downloads/qrbgua.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
+
+        if (hBitmap) {
+            SendMessage(hImage, STM_SETIMAGE, (WPARAM)IMAGE_BITMAP, (LPARAM)hBitmap);
+        }
+        else {
+             DWORD error = GetLastError();
+                std::wstringstream ss;
+                ss << L"Failed to load image. Error code: " << error;
+                MessageBox(hWnd, ss.str().c_str(), TEXT("Error"), MB_OK);
+        }
+    }
+                  break;
     case WM_COMMAND: {
         int wmId = LOWORD(wParam);
         switch (wmId) {
